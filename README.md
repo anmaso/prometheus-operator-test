@@ -1,134 +1,212 @@
 # prometheus-operator-test
-#
+
 This is a test to configure prometheus to scrap metrics from velero
 It uses a k8s kind cluster for tests
 
-Requirements:
+## Requirements:
+
 - docker or podman installed and working
 - kubectl
 - git
 - kind
 - velero CLI
 
-start by provisioning the cluster
+## Setup
+
+Check if everything is installing before attempting to install again
+
+1. **Provision the cluster**
+
+   ```bash
+   kind create cluster
+   ```
+
+2. **Install Velero CLI**
+
+   _Using Homebrew (macOS):_
+
+   ```bash
+   brew install velero
+   ```
+
+3. **Clone the Velero repository**
+
+   ```bash
+   git clone https://github.com/vmware-tanzu/velero
+   ```
+
+4. **Create Velero credentials file**
+
+   Create a file named `credentials-velero` with the following content:
+
+   ```
+   [default]
+   aws_access_key_id = minio
+   aws_secret_access_key = minio123
+   ```
+
+5. **Deploy Minio**
+
+   ```bash
+   kubectl apply -f velero/examples/minio/00-minio-deployment.yaml
+   ```
+
+6. **Install Velero**
+
+   ```bash
+   velero install \
+       --provider aws \
+       --plugins velero/velero-plugin-for-aws:v1.2.1 \
+       --bucket velero \
+       --secret-file ./credentials-velero \
+       --use-volume-snapshots=false \
+       --backup-location-config region=minio,s3ForcePathStyle="true",s3Url=http://minio.velero.svc:9000
+   ```
+
+7. **Install Prometheus Operator**
+
+   We will use the `release-0.10` branch of `kube-prometheus` for compatibility with the default `kind` Kubernetes version.
+
+   ```bash
+   git clone --branch release-0.10 https://github.com/prometheus-operator/kube-prometheus.git
+   kubectl create -f kube-prometheus/manifests/setup
+   until kubectl get servicemonitors --all-namespaces ; do date; sleep 1; echo ""; done
+   kubectl create -f kube-prometheus/manifests/
+   ```
+
+8. **Configure Prometheus to scrape Velero**
+
+   a. **Create a Role and RoleBinding for Prometheus**
+
+   Create a file named `role.yaml`:
+
+   ```yaml
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: Role
+   metadata:
+     namespace: velero
+     name: velero-reader
+   rules:
+    - apiGroups: [""]
+      resources: ["pods", "services']
+      verbs: ["get", "list", "watch"]
+   ```
+
+   Create a file named `rolebinding.yaml`:
+
+   ```yaml
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: RoleBinding
+   metadata:
+     name: velero-binding
+     namespace: velero
+   subjects:
+     - kind: ServiceAccount
+       name: prometheus-k8s
+       namespace: monitoring
+   roleRef:
+     kind: Role
+     name: velero-reader
+     apiGroup: rbac.authorization.k8s.io
+   ```
+
+   Apply the files:
+
+   ```bash
+   kubectl apply -f role.yaml
+   kubectl apply -f rolebinding.yaml
+   ```
+
+   b. **Create a Service for Velero**
+
+   ```bash
+   kubectl create service clusterip velero --tcp=8085:8085 -n velero
+   kubectl patch service velero -n velero -p '{"spec":{"selector":{"component": "velero"}}}'
+   kubectl label service velero -n velero app=velero --overwrite
+   ```
+
+   c. **Create a ServiceMonitor**
+
+   Create a file named `servicemonitor.yaml`:
+
+   ```yaml
+   apiVersion: monitoring.coreos.com/v1
+   kind: ServiceMonitor
+   metadata:
+     name: velero-sm
+     namespace: monitoring
+   spec:
+     selector:
+       matchLabels:
+         app: velero
+     namespaceSelector:
+       matchNames:
+         - velero
+     endpoints:
+       - port: metrics
+         path: /metrics
+   ```
+
+   Apply the file:
+
+   ```bash
+   kubectl apply -f servicemonitor.yaml
+   ```
+
+   d. **Configure Prometheus to select the ServiceMonitor**
+
+   ```bash
+   kubectl patch prometheus k8s -n monitoring --type='json' -p='[{"op": "add", "path": "/spec/serviceMonitorSelector", "value": {}}]'
+   ```
+
+9. **Create a test backup and a scheduled one**
+
+Adjust the time to the next minute, not to wait too much for it to happen
+
+```bash
+velero backup create nginx-backup --selector app=nginx
+velero schedule create nginx-daily --schedule="1 * * * *" --selector app=nginx
 
 ```
-kind create cluster
-```
 
-verify access to the cluster 
+10. **Query Prometheus for Velero metrics**
 
-Clone the velero repository
+    ```bash
+    kubectl port-forward -n monitoring service/prometheus-k8s 9090:9090 &
+    curl -s http://localhost:9090/api/v1/query?query=velero_backup_success_total | jq
+    ```
 
-```
-git clone https://github.com/vmware-tanzu/velero
-```
+11. **Test deleting the nginx namespace completely, we will recover it with restore**
+    ```bash
+    kubectl delete namespace nginx
+    ```
+12. **Recover the nginx namespace**
 
-Create a Velero-specific credentials file (credentials-velero) in your Velero directory:
+    ```bash
+    velero restore create --from-backup nginx-backup
+    velero restore get
 
-```
-[default]
-aws_access_key_id = minio
-aws_secret_access_key = minio123
-```
+    ```
 
-deploy a sample workload
+## Troubleshooting
 
-```
-kubectl apply -f examples/minio/00-minio-deployment.yaml
-```
+If you are unable to scrape the Velero metrics, you can try the following:
 
-install velero
-
-
-```
-velero install \
-    --provider aws \
-    --plugins velero/velero-plugin-for-aws:v1.2.1 \
-    --bucket velero \
-    --secret-file ./credentials-velero \
-    --use-volume-snapshots=false \
-    --backup-location-config region=minio,s3ForcePathStyle="true",s3Url=http://minio.velero.svc:9000
-```
-
-
-To install the prometheus operator 
-
-```
-git clone https://github.com/prometheus-operator/kube-prometheus.git
-
-  # Create the namespace and CRDs, and then wait for them to be available before creating the remaining resources
-kubectl create -f manifests/setup
-
-# Wait until the "servicemonitors" CRD is created. The message "No resources found" means success in this context.
-until kubectl get servicemonitors --all-namespaces ; do date; sleep 1; echo ""; done
-
-kubectl create -f manifests/
-```
-
-
-```
-apiVersion: monitoring.coreos.com/v1
-kind: Prometheus
-metadata:
-  name: prometheus
-spec:
-  serviceAccountName: prometheus
-```
-
-To access apps in another namespace, Prometheus service account will need permission in another namespace to access pods
-
-  - role in target namespace
-  - binding in target namespace pointing to the service account in the prometheus monitoring namespace
-
-```
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: velero
-  name: pod-reader
-rules:
- - apiGroups: [""]
-   resources: ["pods"]
-   verbs: ["get", "list", "watch"]
-```
-
-```
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: pod-reader-binding
-  namespace: velero
-subjects:
-  - kind: ServiceAccount
-    name: prometheus-k8s
-    namespace: monitoring
-roleRef:
-  kind: Role
-  name: pod-reader
-  apiGroup: rbac.authorization.k8s.io
-```
-
-example podMonitor to read velero metrics 
-
-```
-apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
-metadata:
-  name: velero-pod
-  namespace: monitoring
-spec:
-  selector:
-    matchLabels:
-      component: velero
-      deploy: velero
-  namespaceSelector:
-    matchNames:
-      - velero
-  podMetricsEndpoints:
-  - port: metrics
-
-```
-
-
-
+- **Check the Prometheus targets:**
+  ```bash
+  curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.scrapePool == "service-monitor/monitoring/velero-sm/0")'
+  ```
+- **Check the Prometheus Operator logs:**
+  ```bash
+  kubectl logs -n monitoring deploy/prometheus-operator
+  ```
+- **Restart the Prometheus pods:**
+  ```bash
+  kubectl delete pod -n monitoring -l app.kubernetes.io/name=prometheus
+  ```
+- **Ensure the `serviceMonitorSelector` in the `Prometheus` custom resource is set to `{}`.**
+  ```bash
+  kubectl get prometheus k8s -n monitoring -o jsonpath='{.spec.serviceMonitorSelector}'
+  ```
+- **Ensure the `ServiceMonitor`'s selector matches the labels on the `velero` service.**
+- **Ensure the `velero` service's selector matches the labels on the `velero` pod.**
