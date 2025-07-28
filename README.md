@@ -47,7 +47,7 @@ Check if everything is installing before attempting to install again
 
    Create a file named `credentials-velero` with the following content:
 
-   ```
+   ```bash
    cat << EOF > credentials-velero
    [default]
    aws_access_key_id = minio
