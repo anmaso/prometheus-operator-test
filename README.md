@@ -61,10 +61,13 @@ Check if everything is installing before attempting to install again
    kubectl apply -f velero/examples/minio/00-minio-deployment.yaml
    ```
 
+   We need to create a velero bucket in minio, the setup pod fails for some reason and we have to do it manually
+   The minio pod contains a webUI that can be port-fowwarded and the bucket created manually
+
 6. **Install Velero**
 
    ```bash
-   velero install \
+   ./velero/velero install \
        --provider aws \
        --plugins velero/velero-plugin-for-aws:v1.2.1 \
        --bucket velero \
@@ -91,6 +94,7 @@ Check if everything is installing before attempting to install again
    Create a file named `role.yaml`:
 
    ```yaml
+   cat << EOF > role.yaml
    apiVersion: rbac.authorization.k8s.io/v1
    kind: Role
    metadata:
@@ -100,11 +104,13 @@ Check if everything is installing before attempting to install again
     - apiGroups: [""]
       resources: ["pods", "services']
       verbs: ["get", "list", "watch"]
+   EOF
    ```
 
    Create a file named `rolebinding.yaml`:
 
    ```yaml
+   cat << EOF > rolebinding.yaml
    apiVersion: rbac.authorization.k8s.io/v1
    kind: RoleBinding
    metadata:
@@ -118,6 +124,7 @@ Check if everything is installing before attempting to install again
      kind: Role
      name: velero-reader
      apiGroup: rbac.authorization.k8s.io
+   EOF
    ```
 
    Apply the files:
