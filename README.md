@@ -82,6 +82,11 @@ Check if everything is installing before attempting to install again
 
    ```bash
    git clone --branch release-0.10 https://github.com/prometheus-operator/kube-prometheus.git
+   ```
+
+   And install
+
+   ```bash
    kubectl create -f kube-prometheus/manifests/setup
    until kubectl get servicemonitors --all-namespaces ; do date; sleep 1; echo ""; done
    kubectl create -f kube-prometheus/manifests/
@@ -93,7 +98,7 @@ Check if everything is installing before attempting to install again
 
    Create a file named `role.yaml`:
 
-   ```yaml
+   ```bash
    cat << EOF > role.yaml
    apiVersion: rbac.authorization.k8s.io/v1
    kind: Role
@@ -109,7 +114,7 @@ Check if everything is installing before attempting to install again
 
    Create a file named `rolebinding.yaml`:
 
-   ```yaml
+   ```bash
    cat << EOF > rolebinding.yaml
    apiVersion: rbac.authorization.k8s.io/v1
    kind: RoleBinding
