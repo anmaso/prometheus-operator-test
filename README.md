@@ -35,14 +35,24 @@ Check if everything is installing before attempting to install again
    git clone https://github.com/vmware-tanzu/velero
    ```
 
+   deploy a test workload
+
+   ```
+
+   kubectl apply -f examples/nginx-app/base.yaml
+
+   ```
+
 4. **Create Velero credentials file**
 
    Create a file named `credentials-velero` with the following content:
 
    ```
+   cat << EOF > credentials-velero
    [default]
    aws_access_key_id = minio
    aws_secret_access_key = minio123
+   EOF
    ```
 
 5. **Deploy Minio**
